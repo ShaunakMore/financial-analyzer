@@ -4,6 +4,8 @@ import os
 import uuid
 import asyncio
 
+from celery_worker import celery_app, run_financial_analysis
+from celery.result import AsyncResult
 from crewai import Crew, Process,LLM
 from agents import financial_analyst,verifier,investment_advisor,risk_assessor
 from task import analyze_financial_document,verification,investment_analysis,risk_assessment
@@ -18,34 +20,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# FIX: Proper definition of Crew
-def run_crew(query: str, file_path: str="data/sample.pdf"):
-    """To run the whole crew"""
-    financial_crew = Crew(
-        agents=[verifier,financial_analyst,investment_advisor,risk_assessor],
-        tasks=[verification,analyze_financial_document,investment_analysis,risk_assessment],
-        process=Process.sequential,
-    )
-    
-    result = financial_crew.kickoff({'query': query,'file_path':file_path})
-    
-    task_output = [task.raw for task in result.tasks_output]
-    
-    parsed_task_output = f"""
-    \nANALYSIS:\n
-     
-    {task_output[1]}
-    
-    \nINVESTMENT INSIGHT:\n
-    
-    {task_output[2]}
-    
-    \nRISK ANALYSIS:\n
-    
-    {task_output[3]}
-    """
-
-    return parsed_task_output
 
 @app.get("/")
 async def root():
@@ -77,26 +51,25 @@ async def analyze_financial_endpoint(
             query = "Analyze this financial document for investment insights"
             
         # Process the financial document with all analysts
-        response = run_crew(query=query.strip(), file_path=file_path)
-        
+        task = run_financial_analysis.delay(query, file_path)
+    
         return {
-            "status": "success",
-            "query": query,
-            "analysis": str(response),
-            "file_processed": file_path
+            "status": "Task Enqueued",
+            "task_id": task.id,
+            "check_status_url": f"/status/{task.id}"
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing financial document: {str(e)}")
-    
-    finally:
-        # Clean up uploaded file
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except:
-                pass  # Ignore cleanup errors
 
+@app.get("/status/{task_id}")
+async def get_status(task_id: str):
+    res = AsyncResult(task_id, app=celery_app)
+    return {
+        "task_id": task_id,
+        "state": res.state,
+        "result": res.result if res.ready() else "Processing..."
+    }
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
