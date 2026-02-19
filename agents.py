@@ -33,7 +33,7 @@ financial_analyst=Agent(
     ),
     tools=[FinancialDocumentTool(), search_tool],
     llm=llm,
-    max_iter=1,  
+    max_iter=2,  
 )
 
 # Creating a document verifier agent
@@ -47,7 +47,7 @@ verifier = Agent(
     ),
     llm=llm,
     tools=[FinancialDocumentTool()],
-    max_iter=1,
+    max_iter=2,
 )
 
 
@@ -62,7 +62,7 @@ investment_advisor = Agent(
     ),
     llm=llm,
     tools=[InvestmentTool()],
-    max_iter=1,
+    max_iter=2,
 )
 
 
@@ -75,6 +75,6 @@ risk_assessor = Agent(
         "You look for red flags like high debt or declining margins."
     ),
     llm=llm,
-    max_iter=1,
+    max_iter=2,
     tools=[RiskTool()],
 )

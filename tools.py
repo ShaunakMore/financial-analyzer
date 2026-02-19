@@ -52,7 +52,7 @@ class FinancialDocumentTool(BaseTool):
         
         # NOTE: A limit of 5000 words added due to free-tier api token and rate limit limitation.
         # This is to be removed in production.    
-        return full_report[:5000]
+        return full_report
     
     async def _arun(self, file_path) -> str:
         return self._run(file_path)

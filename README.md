@@ -1,6 +1,6 @@
 # 📊 Financial Document Analyzer
 
-A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes financial PDF documents to provide investment insights, risk assessments, and compliance verification.
+A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes financial PDF documents to provide investment insights, risk assessments, and compliance verification. Analysis jobs are processed asynchronously using **Celery** and **Redis**.
 
 ---
 
@@ -15,8 +15,8 @@ A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes fina
 **Bug 2 — Missing imports for `tools`**
 - ✅ `from tools import search_tool, FinancialDocumentTool, RiskTool, InvestmentTool`
 
-**Bug 3 — llm variable not instantiated as a CrewAI `LLM` object**
-- The llm was not using CrewAI's native `LLM` class, which is required for proper integration.
+**Bug 3 — `llm` not instantiated as a CrewAI `LLM` object**
+- The LLM was not using CrewAI's native `LLM` class, which is required for proper integration.
 - ✅ Fixed by defining `llm` using `LLM(model=..., temperature=..., api_key=..., config=...)`.
 
 **Bug 4 — All agents had the same tool (`FinancialDocumentTool`) regardless of role**
@@ -42,8 +42,8 @@ A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes fina
 - ❌ `from crewai_tools.tools import SerperDevTool`
 - ✅ `from crewai_tools import SerperDevTool`
 
-**Bug 8 — `FinancialDocumentTool`, `InvestmentTool`, and `RiskTool` did not inherit from `BaseTool`**
-- Custom tools must extend `BaseTool` to be compatible with CrewAI agents.
+**Bug 8 — Custom tools did not inherit from `BaseTool`**
+- `FinancialDocumentTool`, `InvestmentTool`, and `RiskTool` must extend `BaseTool` to be compatible with CrewAI agents.
 - ✅ All three tools now properly inherit from `crewai.tools.BaseTool`.
 
 **Bug 9 — `_run` and `_arun` methods were missing from all custom tools**
@@ -54,9 +54,9 @@ A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes fina
 - ❌ `PyPDFLoader` was used but never imported.
 - ✅ Fixed: `from langchain_community.document_loaders import PyPDFLoader as Pdf`
 
-**Bug 11 —  Pydantic input schemas missing**
-- Tools had no `args_schema` defined, meaning CrewAI had no way to validate or structure the inputs passed to them at runtime.
-- ✅ Fixed by adding Pydantic models with properly typed and described fields, then linking them via `args_schema` on each tool.
+**Bug 11 — Pydantic input schemas missing for all custom tools**
+- Tools had no `args_schema` defined, meaning CrewAI had no way to validate or structure inputs passed to them at runtime.
+- ✅ Fixed by adding `FinancialDocumentInput`, `InvestmentInput`, and `RiskInput` Pydantic models with properly typed and described fields, then linking them via `args_schema` on each tool.
 
 ---
 
@@ -64,11 +64,11 @@ A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes fina
 
 **Bug 12 — API endpoint function named `analyze_financial_document` conflicted with the task function name**
 - This caused import shadowing and routing ambiguity.
-- ✅ Renamed the endpoint to `analyze_financial_endpoint`.
+- ✅ Renamed the endpoint function to `analyze_financial_endpoint`.
 
-**Bug 13 — `Crew` was not properly defined**
-- Missing explicit `agents`, `tasks`, and `process` arguments.
-- ✅ `run_crew()` now properly instantiates `Crew` with all required parameters using `Process.sequential`.
+**Bug 13 — Crew instantiated synchronously inside the request handler, blocking the server**
+- Long-running CrewAI jobs would block the FastAPI event loop for the entire duration of the analysis.
+- ✅ Moved crew execution into a Celery task (`celery_worker.py`). The `/analyze` endpoint now enqueues the job and immediately returns a `task_id`, keeping the server non-blocking.
 
 ---
 
@@ -86,9 +86,9 @@ A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes fina
 - Vague task descriptions produced inconsistent, low-quality LLM outputs.
 - ✅ Rewrote all task descriptions to be explicit and structured, with clear `expected_output` definitions.
 
-**Bug 17 — Same `agent` parameter for all tasks**
-- All tasks were passed the same `financeagent` agent
-- ✅ Assigned proper values to `agent` param.
+**Bug 17 — Same `agent` parameter assigned to all tasks**
+- All tasks were assigned the same `financeagent` agent.
+- ✅ Each task now has its correct, role-appropriate agent assigned.
 
 ---
 
@@ -97,6 +97,7 @@ A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes fina
 ### Prerequisites
 
 - Python 3.10+
+- [Docker](https://www.docker.com/) (for running Redis)
 - A [Gemini API Key](https://aistudio.google.com/) (stored in `.env`)
 - A [Serper API Key](https://serper.dev/) for web search (stored in `.env`)
 
@@ -107,23 +108,16 @@ A multi-agent AI system built with **CrewAI** and **FastAPI** that analyzes fina
 git clone https://github.com/ShaunakMore/financial-analyzer.git
 cd financial-analyzer
 ```
+
 ```bash
-# Create and activate a virtual environment
+# Option A — Standard venv
 python -m venv venv
 source venv/bin/activate      # On Windows: venv\Scripts\activate
-
-# Install dependencies
 pip install -r requirements.txt
-```
 
-or
-
-```bash
-# Create and activate a virtual environment using uv (Recommended)
+# Option B — uv (Recommended)
 uv sync
-
 ```
-
 
 ### Environment Variables
 
@@ -134,13 +128,31 @@ GEMINI_API_KEY=your_gemini_api_key_here
 SERPER_API_KEY=your_serper_api_key_here
 ```
 
-### Running the Server
+### Starting Redis
 
+Redis is used as the Celery broker and result backend. Run it via Docker:
+
+```bash
+docker run -d -p 6379:6379 redis
+```
+
+### Running the Application
+
+You need two processes running simultaneously — open a separate terminal for each:
+
+**1. Start the Celery worker**
+```bash
+celery -A celery_worker worker --loglevel=info
+```
+
+**2. Start the FastAPI server**
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 The API will be available at `http://localhost:8000`.
+
+---
 
 ## 📡 API Documentation
 
@@ -167,7 +179,7 @@ http://localhost:8000
 
 ### `POST /analyze`
 
-**Analyze a Financial Document** — Uploads a PDF and runs the full multi-agent analysis pipeline.
+**Analyze a Financial Document** — Uploads a PDF and enqueues an analysis job. Returns immediately with a `task_id` to poll for results.
 
 #### Request
 
@@ -199,14 +211,13 @@ with open("apple_10k.pdf", "rb") as f:
 print(response.json())
 ```
 
-#### Success Response (`200 OK`)
+#### Response (`200 OK`)
 
 ```json
 {
-  "status": "success",
-  "query": "Summarize the key financial risks in this report.",
-  "analysis": "\nANALYSIS:\n...\n\nINVESTMENT INSIGHT:\n...\n\nRISK ANALYSIS:\n...",
-  "file_processed": "data/apple_10k.pdf_<uuid>.pdf"
+  "status": "Task Enqueued",
+  "task_id": "a3f1c2d4-...",
+  "check_status_url": "/status/a3f1c2d4-..."
 }
 ```
 
@@ -220,9 +231,43 @@ print(response.json())
 
 ---
 
+### `GET /status/{task_id}`
+
+**Poll Task Status** — Check whether an analysis job has completed and retrieve the result.
+
+#### Example (curl)
+
+```bash
+curl http://localhost:8000/status/a3f1c2d4-...
+```
+
+#### Response — Job in progress
+
+```json
+{
+  "task_id": "a3f1c2d4-...",
+  "state": "PENDING",
+  "result": "Processing..."
+}
+```
+
+#### Response — Job complete
+
+```json
+{
+  "task_id": "a3f1c2d4-...",
+  "state": "SUCCESS",
+  "result": "\nANALYSIS:\n...\n\nINVESTMENT INSIGHT:\n...\n\nRISK ANALYSIS:\n..."
+}
+```
+
+**Possible `state` values:** `PENDING`, `STARTED`, `SUCCESS`, `FAILURE`
+
+---
+
 ## 🤖 Agent Pipeline Overview
 
-The system runs four agents sequentially, each building on the previous:
+The system runs four agents sequentially inside a Celery worker, each building on the previous:
 
 | Step | Agent | Role | Output |
 |------|-------|------|--------|
